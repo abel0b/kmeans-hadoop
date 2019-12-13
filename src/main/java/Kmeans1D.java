@@ -3,6 +3,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.DoubleWritable;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.ArrayPrimitiveWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
@@ -14,6 +15,11 @@ import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import java.lang.Math;
 import java.lang.RuntimeException;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FileSystem;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 
 public class Kmeans1D {
     public static class Kmeans1DMapper
@@ -36,14 +42,15 @@ public class Kmeans1D {
             System.out.println(column);
         } 
 
-        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-            if (k != 3) {
-                throw new RuntimeException("Bad.");  
-            }
-            String token = value.toString().split(",")[column];
-            if (token.isEmpty()) return;
-            Double point = Double.valueOf(token);
+        public void map(Object key, Text value, Context context) throws IOException, InterruptedException, RuntimeException {
             
+            String token = value.toString().split(",")[column];
+            
+            if (token.isEmpty()) return;
+            
+                        
+            Double point = Double.valueOf(token);
+
             double centroid = centroids[0];
             double dmin = Math.abs(point - centroids[0]);
             for(int i=1; i<k; i++) {
@@ -53,11 +60,12 @@ public class Kmeans1D {
                     centroid = centroids[i];
                 }
             }
+
             context.write(new DoubleWritable(centroid), new DoubleWritable(point));
         }
     }
     public static class Kmeans1DReducer
-    extends Reducer<DoubleWritable,DoubleWritable,DoubleWritable,DoubleWritable> {
+    extends Reducer<DoubleWritable,DoubleWritable,DoubleWritable,NullWritable> {
         int k;
 
         protected void setup(Context context) {
@@ -67,21 +75,14 @@ public class Kmeans1D {
         
         public void reduce(DoubleWritable key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
             double mean = 0.0;
-            
+
             int nbp = 0;
-            for(DoubleWritable point: values) {
+            for(DoubleWritable point: values) { 
+                mean = mean + point.get();
                 nbp++;
             }
-
-            double points[] = new double[nbp];
-            int i = 0;
-            for(DoubleWritable point: values) {
-                mean += point.get();
-                points[i] = point.get();
-                i++;
-            }
             mean = mean / Double.valueOf(nbp);
-            context.write(new DoubleWritable(mean), new DoubleWritable(1.0));
+            context.write(new DoubleWritable(mean), NullWritable.get());
         }
     }
     public static void main(String[] args) throws Exception {
@@ -97,12 +98,24 @@ public class Kmeans1D {
         conf.setInt("k", Integer.parseInt(args[2]));
         conf.setInt("column", Integer.parseInt(args[3]));
 
+        Path hdfsInputPath = new Path(args[0]);
+        FileSystem fs = FileSystem.get(conf);
+
+        FSDataInputStream inputStream = fs.open(hdfsInputPath);
+        BufferedReader bufferedReader = new BufferedReader(
+            new InputStreamReader(inputStream, StandardCharsets.UTF_8)
+        );
+
+        String line = null;
+
         String centroids = "";
         for (int i =0; i<conf.getInt("k", 42);i++) {
             if (i != 0) {
                 centroids = centroids.concat(" ");
             }
-            centroids = centroids.concat(String.valueOf(Math.random() * 10000.0));
+            line = bufferedReader.readLine();
+            System.out.println(line);
+            centroids = centroids.concat(String.valueOf(Math.random()));
         }
         conf.setStrings("centroids", centroids);
 
@@ -114,7 +127,7 @@ public class Kmeans1D {
         job.setMapOutputValueClass(DoubleWritable.class);
         job.setReducerClass(Kmeans1DReducer.class);
         job.setOutputKeyClass(DoubleWritable.class);
-        job.setOutputValueClass(DoubleWritable.class);
+        job.setOutputValueClass(NullWritable.class);
         job.setOutputFormatClass(TextOutputFormat.class);
         job.setInputFormatClass(TextInputFormat.class);
         FileInputFormat.addInputPath(job, new Path(args[0]));
