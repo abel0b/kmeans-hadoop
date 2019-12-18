@@ -15,49 +15,47 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import org.apache.hadoop.io.Text;
+import java.io.IOException;
 
 public class Kmeans {
-    public static void main(String[] args) throws Exception {
-        if (args.length < 4) {
-            System.out.println("Missing arguments");
+    public static void main(String[] args) throws Exception, IOException {
+        if (args.length < 4 || args.length > 4) {
+            System.err.println("[error] Invalid arguments");
             System.exit(1);
         }
-        if (args.length > 4) {
-            System.out.println("Too much arguments");
-            System.exit(1);
-        }
+        
         Configuration conf = new Configuration();
         conf.setInt("k", Integer.parseInt(args[2]));
         conf.setInt("column", Integer.parseInt(args[3]));
+        conf.set("centroidsPath", String.format("%s-centroids", args[1]));
 
-        Path hdfsInputPath = new Path(args[0]);
+        Path input = new Path(args[0]);
+        Path output = new Path(args[1]);
+        Path centroids = new Path(conf.get("centroidsPath"));
+
         FileSystem fs = FileSystem.get(conf);
-
-        FSDataInputStream inputStream = fs.open(hdfsInputPath);
-        BufferedReader bufferedReader = new BufferedReader(
-            new InputStreamReader(inputStream, StandardCharsets.UTF_8)
-        );
-
-        String line = null;
-
-        String centroids = "";
-        for (int i =0; i<conf.getInt("k", 42);i++) {
-            if (i != 0) {
-                centroids = centroids.concat(" ");
-            }
-            line = bufferedReader.readLine();
-            System.out.println(line);
-            centroids = centroids.concat(String.valueOf(Math.random()));
+        
+        if(fs.exists(centroids)) {
+            fs.delete(centroids);
         }
-        conf.setStrings("centroids", centroids);
 
-        System.out.printf("okok\n");
+        Initializer initializer = new RandomInitializer();
+        initializer.initialize(conf);
+
+        initializer.saveToFile(conf, centroids);
+
+        // FSDataInputStream inputStream = fs.open(input);
+        // BufferedReader bufferedReader = new BufferedReader(
+        //     new InputStreamReader(inputStream, StandardCharsets.UTF_8)
+        // );
+
+        System.out.printf("Initialization done\n");
 
         boolean converged = false;
         int iteration = 0;
         while(!converged) {
             iteration ++;
-            String jobname = String.format("k-means iteration %d", iteration);
+            String jobname = String.format("kmeans-iteration-%d", iteration);
             Job job = Job.getInstance(conf, jobname);
             job.setNumReduceTasks(1);
             job.setJarByClass(KmeansIteration.class);
@@ -69,18 +67,19 @@ public class Kmeans {
             job.setOutputValueClass(NullWritable.class);
             job.setOutputFormatClass(TextOutputFormat.class);
             job.setInputFormatClass(TextInputFormat.class);
-            FileInputFormat.addInputPath(job, new Path(args[0]));
-            FileOutputFormat.setOutputPath(job, new Path(args[1]));
+            FileInputFormat.addInputPath(job, input);
+            FileOutputFormat.setOutputPath(job, output);
+            fs.delete(output, true);
             if(!job.waitForCompletion(true)) {
                 System.err.printf("Job [%s] failed\n", jobname);
                 System.exit(1);
             }
-            converged = iteration == 3;
+            converged = iteration == 5;
         }
 
         System.out.printf("K-means converged after %d iterations", iteration);
 
-        Job job = Job.getInstance(conf, "k-means output");
+        Job job = Job.getInstance(conf, "kmeans-output");
         job.setNumReduceTasks(1);
         job.setJarByClass(KmeansOutput.class);
         job.setMapperClass(KmeansOutput.KmeansOutputMapper.class);
@@ -88,6 +87,8 @@ public class Kmeans {
         job.setMapOutputValueClass(NullWritable.class);
         job.setOutputFormatClass(TextOutputFormat.class);
         job.setInputFormatClass(TextInputFormat.class);
+        FileInputFormat.addInputPath(job, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
         System.out.printf("Output file written in %s\n", args[1]);
     }
