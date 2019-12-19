@@ -11,7 +11,6 @@ import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.fs.Path;
-import java.io.IOException;
 
 public class KmeansIteration {
     public static class KmeansIterationMapper extends Mapper<Object, Text, DoubleWritable, DoubleWritable> {
@@ -33,12 +32,13 @@ public class KmeansIteration {
                 );
             
             
-                IntWritable key = new IntWritable();
                 DoubleWritable centroid = new DoubleWritable();
 
                 centroids = new double[k];
-                while(reader.next(key, centroid)) {
-                    centroids[key.get()] = centroid.get();
+                int i = 0;
+                while(reader.next(centroid, NullWritable.get())) {
+                    centroids[i] = centroid.get();
+                    i++;
                 }
                 reader.close();
             }

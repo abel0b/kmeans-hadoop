@@ -4,7 +4,7 @@ import org.apache.hadoop.fs.Path;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.ListIterator;
-import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.DoubleWritable;
 import java.io.IOException;
 
@@ -21,16 +21,16 @@ public abstract class Initializer {
         SequenceFile.Writer writer = SequenceFile.createWriter(
             conf,
             SequenceFile.Writer.file(output),
-            SequenceFile.Writer.keyClass(IntWritable.class),
-            SequenceFile.Writer.valueClass(DoubleWritable.class)
+            SequenceFile.Writer.keyClass(DoubleWritable.class),
+            SequenceFile.Writer.valueClass(NullWritable.class)
         );
 
         ListIterator<Centroid> centroidIterator = this.centroids.listIterator();
         int i = 0;
         while(centroidIterator.hasNext()) {
             writer.append(
-                new IntWritable(i),
-                new DoubleWritable(centroidIterator.next().get())
+                new DoubleWritable(centroidIterator.next().get()),
+                NullWritable.get()
             );
             i++;
         }

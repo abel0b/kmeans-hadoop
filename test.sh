@@ -11,7 +11,4 @@ KMEANS_COLUMN=${KMEANS_COLUMN:-5}
 
 mvn compile
 mvn package
-hdfs dfs -rm -r -f $KMEANS_OUTPUT
 yarn jar target/kmeans1D-0.1.0.jar $KMEANS_INPUT $KMEANS_OUTPUT $KMEANS_K $KMEANS_COLUMN
-hdfs dfs -cat $KMEANS_OUTPUT/part-r-00000
-
