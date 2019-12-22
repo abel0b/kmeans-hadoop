@@ -11,83 +11,146 @@ import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.fs.Path;
+import java.util.List;
+import java.util.ArrayList;
+import org.apache.hadoop.mapred.Reporter;
 
 public class KmeansIteration {
-    public static class KmeansIterationMapper extends Mapper<Object, Text, DoubleWritable, DoubleWritable> {
+    public static class KmeansIterationMapper extends Mapper<Object, Text, IntWritable, Point> {
         int k;
-        int column;
-        double centroids[];
+        int n;
+        int iteration;
+        int columns[];
+        Point centroids[];
 
-        protected void setup(Context context) {
+        protected void setup(Context context) throws IOException {
             Configuration conf = context.getConfiguration();
-            k = conf.getInt("k", 42);
-            column = conf.getInt("column", 42);
-            
+            this.k = conf.getInt("k", 42);
+            this.n = conf.getInt("n", 42);
+            this.iteration = conf.getInt("iteration", 42);
+
+            this.columns = new int[n];
+            int i = 0;
+            for(String column: conf.get("columns").split(",")) {
+                this.columns[i] = Integer.parseInt(column);
+                i++;
+            }
+
             Path centroidsPath = new Path(conf.get("centroidsPath"));
-           
+
             try {
                 SequenceFile.Reader reader = new SequenceFile.Reader(
                     conf,
                     SequenceFile.Reader.file(centroidsPath)
                 );
-            
-            
-                DoubleWritable centroid = new DoubleWritable();
-
-                centroids = new double[k];
-                int i = 0;
-                while(reader.next(centroid, NullWritable.get())) {
-                    centroids[i] = centroid.get();
+                Point centroid = new Point();
+                IntWritable cluster = new IntWritable();
+                this.centroids = new Point[k];
+                i = 0;
+                while(reader.next(cluster, centroid)) {
+                    this.centroids[i] = centroid;
+                    centroid = new Point();
                     i++;
                 }
+                if(i!=this.k) throw new RuntimeException(String.format("Incomplete centroids file %d/%d\n", i, this.k));
                 reader.close();
             }
             catch(IOException e) {
-                System.err.println("Could not read centroid file");
-                System.exit(1);
+                throw e;
             }
         }
+    
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException, RuntimeException {
+            String tokens[] = value.toString().split(",");
 
-            String token = value.toString().split(",")[column];
+            List<DoubleWritable> coordinates = new ArrayList();
+            for(int i=0; i<this.n; i++) {
+                if (tokens[this.columns[i]].isEmpty()) return;
+                coordinates.add(new DoubleWritable(Double.valueOf(tokens[this.columns[i]])));
+            }
+            Point point = new Point(coordinates);
 
-            if (token.isEmpty()) return;
-
-
-            Double point = Double.valueOf(token);
-
-            double centroid = centroids[0];
-            double dmin = Math.abs(point - centroids[0]);
-            for(int i=1; i<k; i++) {
-                double dtmp = Math.abs(point - centroids[i]);
+            int cluster = 1;
+            double dmin = point.squared_dist(centroids[0]);
+            for(int i=1; i<this.k; i++) {
+                // Squared distance for faster computation
+                double dtmp = point.squared_dist(centroids[i]);
                 if (dtmp < dmin) {
                     dmin = dtmp;
-                    centroid = centroids[i];
+                    cluster = i+1;
                 }
             }
 
-            context.write(new DoubleWritable(centroid), new DoubleWritable(point));
+            context.write(new IntWritable(cluster), point);
         }
     }
+    
     public static class KmeansIterationReducer
-    extends Reducer<DoubleWritable,DoubleWritable,DoubleWritable,NullWritable> {
+    extends Reducer<IntWritable,Point,IntWritable,Point> {
         int k;
+        int n;
+        Point centroids[];
 
-        protected void setup(Context context) {
+        static enum ConvergenceCounter {
+            CONVERGED
+        };
+
+        static double epsilon = 0.1;
+
+        protected void setup(Context context) throws IOException {
             Configuration conf = context.getConfiguration();
-            k = conf.getInt("k", 42);
+            this.k = conf.getInt("k", 42);
+            this.n = conf.getInt("n", 42);
+            Path centroidsPath = new Path(conf.get("centroidsPath"));
+
+            try {
+                SequenceFile.Reader reader = new SequenceFile.Reader(
+                    conf,
+                    SequenceFile.Reader.file(centroidsPath)
+                );
+                Point centroid = new Point();
+                IntWritable cluster = new IntWritable();
+                this.centroids = new Point[k];
+                int i = 0;
+                while(reader.next(cluster, centroid)) {
+                    this.centroids[i] = centroid;
+                    centroid = new Point();
+                    i++;
+                }
+                if(i!=this.k) throw new RuntimeException(String.format("Incomplete centroids file %d/%d\n", i, this.k));
+                reader.close();
+            }
+            catch(IOException e) {
+                throw e;
+            }
         }
 
-        public void reduce(DoubleWritable key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
-            double mean = 0.0;
+        public void reduce(IntWritable key, Iterable<Point> values, Context context) throws IOException, InterruptedException {
+            // Compute new centroid
+            List<DoubleWritable> mean = new ArrayList();
+            for(int i=0;i<this.n;i++) {
+                mean.add(new DoubleWritable(0.0));
+            }
 
             int nbp = 0;
-            for(DoubleWritable point: values) {
-                mean = mean + point.get();
+            for(Point point: values) {
+                for(int i=0; i<this.n; i++) {
+                    mean.set(i, new DoubleWritable(mean.get(i).get() + point.coordinates.get(i).get()));
+                }
                 nbp++;
             }
-            mean = mean / Double.valueOf(nbp);
-            context.write(new DoubleWritable(mean), NullWritable.get());
+            
+            for(int i=0;i<this.n;i++) {
+                mean.set(i, new DoubleWritable(mean.get(i).get() / Double.valueOf(nbp)));
+            }
+
+            Point centroid = new Point(mean);
+            
+            // Increment CONVERGED counter
+            if (this.centroids[key.get()-1].squared_dist(centroid) < this.epsilon) {
+                context.getCounter(ConvergenceCounter.CONVERGED).increment(1);
+            }
+            context.write(new IntWritable(key.get()), centroid);
         }
     }
 }
