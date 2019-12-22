@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import org.apache.hadoop.io.Text;
 import java.lang.Exception;
 import java.util.concurrent.ThreadLocalRandom;
+import java.lang.NumberFormatException;
 
 public class Initializer {
     private List<Point> centroids;

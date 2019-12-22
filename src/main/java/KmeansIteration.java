@@ -14,6 +14,7 @@ import org.apache.hadoop.fs.Path;
 import java.util.List;
 import java.util.ArrayList;
 import org.apache.hadoop.mapred.Reporter;
+import java.lang.NumberFormatException;
 
 public class KmeansIteration {
     public static class KmeansIterationMapper extends Mapper<Object, Text, IntWritable, Point> {
